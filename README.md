@@ -16,7 +16,7 @@ Real-time gait analysis system using foot-mounted Movella DOT IMU sensors with Z
 ## System Requirements
 
 - Python 3.8 or higher
-- macOS, Windows, or Linux
+- Windows, or Linux
 - Bluetooth adapter for wireless sensor communication
 - Movella DOT IMU sensors (minimum 2 for bilateral gait analysis)
 
@@ -146,15 +146,15 @@ logging:
 │ - Sync          │                        │ - Heading correct  │
 └────────┬────────┘                        └─────────┬──────────┘
          │                                           │
-    ┌────▼────┐                                     │
-    │ XDPC    │                                     │
-    │ Handler │◄────────────────────────────────────┘
-    └────┬────┘                                     │
-         │                                          │
-         │                                  ┌───────▼──────────┐
+    ┌────▼────┐                                      │
+    │ XDPC    │                                      │
+    │ Handler │◄─────────────────────────────────────┘
+    └────┬────┘                                      │
+         │                                           │
+         │                                  ┌────────▼──────────┐
          │                                  │ RealTimeVisualizer│
          │                                  │                   │
-         └──────────────────────────────────► - Live plotting  │
+         └──────────────────────────────────► - Live plotting   │
                                             │ - Stride metrics  │
                                             └───────────────────┘
 ```
@@ -359,19 +359,14 @@ If you use this code in your research, please cite:
 [Your citation information here]
 ```
 
-## License
-
-[Your license information here]
-
 ## Contact
 
 For questions or support, please contact:
-- [Your contact information]
+- minjong.kim.snu.ac.kr
 
 ## Acknowledgments
 
 - Movella Technologies for the DOT SDK
-- [Other acknowledgments]
 
 ## Version History
 
@@ -382,3 +377,4 @@ For questions or support, please contact:
 - YAML-based configuration system
 - Comprehensive logging framework
 - Modular architecture with DeviceManager
+
