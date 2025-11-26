@@ -1,5 +1,5 @@
 # Real-Time IMU Gait Analysis - Development Dependencies
-# Python 3.8+
+Python>=3.8,<3.11
 
 # Include all production dependencies
 -r requirements.txt
@@ -29,3 +29,4 @@ sphinx-rtd-theme>=1.0.0,<2.0.0
 # Jupyter notebook support (for data analysis)
 jupyter>=1.0.0,<2.0.0
 ipython>=8.0.0,<9.0.0
+
