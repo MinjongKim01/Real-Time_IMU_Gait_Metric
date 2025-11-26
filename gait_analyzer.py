@@ -64,11 +64,117 @@ class GaitAnalyzer:
         self.lock = threading.Lock()
 
     def _convert_quaternions_to_rotations(self, quat_list):
-        """quaternion을 Rotation 객체로 변환 (wxyz -> xyzw)"""
+        """Convert quaternions to Rotation objects (wxyz -> xyzw)"""
         quat_data_wxyz = np.array(quat_list)
         quat_data_xyzw = np.roll(quat_data_wxyz, -1, axis=1)
         return Rotation.from_quat(quat_data_xyzw)
-    
+
+    def _prepare_imu_data(self, role, acc_local, gyr_local, quat_list):
+        """
+        Common preprocessing: filter and transform to global frame.
+
+        Args:
+            role: Sensor role ('left' or 'right')
+            acc_local: Local frame acceleration [N, 3]
+            gyr_local: Local frame gyroscope [N, 3]
+            quat_list: List of quaternions [N, 4]
+
+        Returns:
+            Tuple of (acc_global_corrected, gyr_z, orientations)
+            - acc_global_corrected: Global frame acceleration with gravity removed [N, 3]
+            - gyr_z: Z-axis gyroscope (sign-corrected for left foot) [N]
+            - orientations: Rotation objects
+        """
+        # Filter
+        acc_local_filtered = gu.butter_lowpass_filter(acc_local, self.FILTER_CUTOFF, self.fs)
+        gyr_local_filtered = gu.butter_lowpass_filter(gyr_local, self.FILTER_CUTOFF, self.fs)
+
+        # Transform to global frame
+        orientations = self._convert_quaternions_to_rotations(quat_list)
+        acc_global = orientations.apply(acc_local_filtered)
+
+        # Remove gravity
+        acc_global_corrected = acc_global.copy()
+        acc_global_corrected[:, 2] -= self.GRAVITY
+
+        # Extract and correct gyro-z
+        gyr_z = gyr_local_filtered[:, 2]
+        if role == "left":
+            gyr_z = -gyr_z
+
+        return acc_global_corrected, gyr_z, orientations
+
+    def _apply_heading_correction(self, role, position, to_idx, hs_idx, initial_pos):
+        """
+        Calculate and apply heading correction to align trajectory to target heading.
+
+        Args:
+            role: Sensor role ('left' or 'right')
+            position: Position array [N, 3]
+            to_idx: Toe-off index in position array
+            hs_idx: Heel-strike index in position array
+            initial_pos: Initial position offset [3]
+
+        Returns:
+            Corrected position array [N, 3]
+        """
+        # Calculate heading correction angle from first stride (if not already set)
+        if self.heading_correction_angle[role] is None:
+            step_vector = position[hs_idx, :2] - position[to_idx, :2]
+            if np.linalg.norm(step_vector) > self.MIN_STEP_DISTANCE:
+                current_angle_rad = np.arctan2(step_vector[1], step_vector[0])
+                self.heading_correction_angle[role] = self.TARGET_HEADING_ANGLE - current_angle_rad
+                logger.info(f"[{role}] Heading correction angle set: {np.degrees(self.heading_correction_angle[role]):.1f} degrees")
+
+        # Apply heading correction rotation
+        if self.heading_correction_angle[role] is not None:
+            angle = self.heading_correction_angle[role]
+            c, s = np.cos(angle), np.sin(angle)
+            R = np.array([[c, -s], [s, c]])
+            initial_pos_xy = initial_pos[:2]
+            pos_xy_centered = position[:, :2] - initial_pos_xy
+            pos_xy_rotated = pos_xy_centered @ R.T
+            position[:, :2] = pos_xy_rotated + initial_pos_xy
+
+        return position
+
+    def _integrate_with_zupt_correction(self, acc, zupt_indices, dt):
+        """
+        Integrate acceleration to velocity with ZUPT corrections and drift correction.
+
+        Args:
+            acc: Acceleration array [N, 3]
+            zupt_indices: Indices where velocity should be zero (sorted)
+            dt: Time step
+
+        Returns:
+            Velocity array [N, 3] with ZUPT and drift corrections applied
+        """
+        n_samples = len(acc)
+        velocity = np.zeros_like(acc)
+
+        # Trapezoidal integration with ZUPT
+        for i in range(1, n_samples):
+            velocity[i, :] = velocity[i - 1, :] + 0.5 * (acc[i, :] + acc[i - 1, :]) * dt
+            if i in zupt_indices:
+                velocity[i, :] = 0.0
+
+        # Velocity drift correction between ZUPT points
+        if len(zupt_indices) > 1:
+            for j in range(len(zupt_indices) - 1):
+                start_idx = zupt_indices[j]
+                end_idx = zupt_indices[j + 1]
+                n_points = end_idx - start_idx
+
+                if n_points <= 0:
+                    continue
+
+                drift = velocity[end_idx - 1, :]
+                correction = np.outer(np.linspace(0, 1, n_points), drift)
+                velocity[start_idx:end_idx, :] = velocity[start_idx:end_idx, :] - correction
+
+        return velocity
+
     def _extract_buffer_slice(self, role, start_idx, end_idx=None):
         """버퍼에서 효율적으로 데이터 슬라이스 추출"""
         buffers = self.data_buffers[role]
@@ -106,22 +212,8 @@ class GaitAnalyzer:
             if len(acc_local) < 2:
                 return None, None, None
             
-            # Quaternion 변환
-            orientations = self._convert_quaternions_to_rotations(quat_list)
-            
-            # Filtering
-            acc_local_filtered = gu.butter_lowpass_filter(acc_local, self.FILTER_CUTOFF, self.fs)
-            gyr_local_filtered = gu.butter_lowpass_filter(gyr_local, self.FILTER_CUTOFF, self.fs)
-            
-            # Global coordinate 변환
-            acc_global = orientations.apply(acc_local_filtered)
-            acc_global_no_g = acc_global.copy()
-            acc_global_no_g[:, 2] -= self.GRAVITY
-            
-            # Gyr-z 추출 (event 감지용)
-            gyr_z = gyr_local_filtered[:, 2]
-            if role == "left":
-                gyr_z = -gyr_z
+            # Preprocess IMU data (filter, transform, remove gravity)
+            acc_global_corrected, gyr_z, orientations = self._prepare_imu_data(role, acc_local, gyr_local, quat_list)
             
             # 구간 내 상대 시간 배열
             n_samples = len(acc_local)
@@ -153,50 +245,16 @@ class GaitAnalyzer:
                         zmpt_idx = cycle_start + int(0.3 * (cycle_end - cycle_start))
                         ms_indices.append(zmpt_idx)
             
-            # Velocity integration with ZUPT
-            velocity = np.zeros_like(acc_global_no_g)
+            # Velocity integration with ZUPT and drift correction
             zupt_indices = sorted(list(set([to_idx_local] + ms_indices + [hs_idx_local])))
-            
-            for i in range(1, n_samples):
-                velocity[i, :] = velocity[i - 1, :] + 0.5 * (acc_global_no_g[i, :] + acc_global_no_g[i - 1, :]) * self.dt
-                if i in zupt_indices:
-                    velocity[i, :] = 0.0
-            
-            # Velocity drift correction
-            if len(zupt_indices) > 1:
-                for j in range(len(zupt_indices) - 1):
-                    start_idx = zupt_indices[j]
-                    end_idx = zupt_indices[j + 1]
-                    n_points = end_idx - start_idx
-                    
-                    if n_points <= 0:
-                        continue
-                    
-                    drift = velocity[end_idx - 1, :]
-                    correction = np.outer(np.linspace(0, 1, n_points), drift)
-                    velocity[start_idx:end_idx, :] = velocity[start_idx:end_idx, :] - correction
+            velocity = self._integrate_with_zupt_correction(acc_global_corrected, zupt_indices, self.dt)
             
             # Position integration
             initial_pos = self.accumulated_position[role].copy()
             position = gu.integrate(velocity, self.dt, initial_pos=initial_pos)
-            
-            # Heading correction 계산 (첫 stride인 경우)
-            if self.heading_correction_angle[role] is None:
-                step_vector = position[hs_idx_local, :2] - position[to_idx_local, :2]
-                if np.linalg.norm(step_vector) > self.MIN_STEP_DISTANCE:
-                    current_angle_rad = np.arctan2(step_vector[1], step_vector[0])
-                    self.heading_correction_angle[role] = self.TARGET_HEADING_ANGLE - current_angle_rad
-                    logger.info(f"[{role}] Heading correction angle set: {np.degrees(self.heading_correction_angle[role]):.1f} degrees")
-            
-            # Heading correction 적용
-            if self.heading_correction_angle[role] is not None:
-                angle = self.heading_correction_angle[role]
-                c, s = np.cos(angle), np.sin(angle)
-                R = np.array([[c, -s], [s, c]])
-                initial_pos_xy = initial_pos[:2]
-                pos_xy_centered = position[:, :2] - initial_pos_xy
-                pos_xy_rotated = pos_xy_centered @ R.T
-                position[:, :2] = pos_xy_rotated + initial_pos_xy
+
+            # Apply heading correction
+            position = self._apply_heading_correction(role, position, to_idx_local, hs_idx_local, initial_pos)
             
             # 첫 stride인 경우 TO를 원점에 정확히 맞춤
             is_first_stride = np.allclose(self.accumulated_position[role], [0.0, 0.0, 0.0])
@@ -243,22 +301,10 @@ class GaitAnalyzer:
                     continue
 
                 try:
-                    # 최적화: 공통 함수로 quaternion 변환
-                    orientations = self._convert_quaternions_to_rotations(quat_list)
+                    # Preprocess IMU data (filter, transform, remove gravity)
+                    acc_global_corrected, gyr_z, orientations = self._prepare_imu_data(role, acc_local, gyr_local, quat_list)
                 except Exception as e:
                     continue
-
-                # ----- Filtering -----
-                acc_local_filtered = gu.butter_lowpass_filter(acc_local, self.FILTER_CUTOFF, self.fs) 
-                gyr_local_filtered = gu.butter_lowpass_filter(gyr_local, self.FILTER_CUTOFF, self.fs)
-
-                acc_global = orientations.apply(acc_local_filtered)
-                acc_global_no_g = acc_global.copy()
-                acc_global_no_g[:, 2] -= self.GRAVITY
-
-                gyr_z = gyr_local_filtered[:, 2]
-                if role == "left":
-                    gyr_z = -gyr_z
                 
                 current_time_array = np.arange(len(gyr_z)) / self.fs
                 
@@ -271,9 +317,9 @@ class GaitAnalyzer:
                 hs_indices_global = [start_idx + idx for idx in hs_indices_local]
                 to_indices_global = [start_idx + idx for idx in to_indices_local]
                 
-                # 실시간 표시용 데이터 저장
+                # Store data for realtime display
                 self.analysis_results[role]["gyr_z"] = gyr_z
-                self.analysis_results[role]["acc_xyz"] = acc_global_no_g 
+                self.analysis_results[role]["acc_xyz"] = acc_global_corrected
                 self.analysis_results[role]["time_array"] = current_time_array
                 self.analysis_results[role]["heel_strikes_idx"] = hs_indices_local
                 self.analysis_results[role]["toe_offs_idx"] = to_indices_local
@@ -351,87 +397,41 @@ class GaitAnalyzer:
                     # Optimization: Use helper function for efficient data extraction
                     acc_local, gyr_local, quat_list = self._extract_buffer_slice(role, 0, n_samples)
 
-                    # Optimization: Convert quaternion using common function
-                    orientations = self._convert_quaternions_to_rotations(quat_list)
+                    # Preprocess IMU data (filter, transform, remove gravity)
+                    acc_global_corrected, gyr_z, orientations = self._prepare_imu_data(role, acc_local, gyr_local, quat_list)
 
                     time_array = np.arange(n_samples) / self.fs
                 except Exception as e:
                     logger.error(f"Error preparing full data for {role}: {e}")
                     continue
-                
-                # 최적화: 상수 사용
-                acc_local_filtered = gu.butter_lowpass_filter(acc_local, self.FILTER_CUTOFF, self.fs)
-                gyr_local_filtered = gu.butter_lowpass_filter(gyr_local, self.FILTER_CUTOFF, self.fs)
-
-                gyr_z = gyr_local_filtered[:, 2]
-                if role == "left":
-                    gyr_z = -gyr_z
                     
                 events = gu.detect_gait_events(gyr_z, time_array, threshold=self.GAIT_DETECTION_THRESHOLD)
                 hs_indices = [e['heelstrike_idx'] for e in events]
                 to_indices = [e['toeoff_idx'] for e in events]
-                
-                acc_global = orientations.apply(acc_local_filtered)
-                acc_global_no_g = acc_global.copy()
-                acc_global_no_g[:, 2] -= self.GRAVITY
-                
+
                 ms_indices = gu.detect_midstance_indices(hs_indices)
-                velocity = np.zeros_like(acc_global_no_g)
-                
+
+                # Determine ZUPT indices
                 zupt_indices = [0]
                 if to_indices:
                     first_event_idx = to_indices[0]
-                    velocity[0:first_event_idx, :] = 0.0 
                     zupt_indices = sorted(list(set([first_event_idx] + ms_indices)))
-                else:
-                    velocity[:, :] = 0.0
-                
-                if not zupt_indices: 
+
+                if not zupt_indices:
                     zupt_indices = [0]
 
-                for i in range(1, n_samples):
-                    velocity[i, :] = velocity[i - 1, :] + 0.5 * (acc_global_no_g[i, :] + acc_global_no_g[i - 1, :]) * self.dt
-                    if i in zupt_indices:
-                        velocity[i, :] = 0.0 
-
-                if to_indices or hs_indices:
-                    for j in range(len(zupt_indices) - 1):
-                        start_idx = zupt_indices[j]
-                        end_idx = zupt_indices[j + 1]
-                        n_points = end_idx - start_idx
-                        
-                        if n_points <= 0: 
-                            continue
-                            
-                        drift = velocity[end_idx - 1, :] 
-                        correction = np.outer(np.linspace(0, 1, n_points), drift)
-                        velocity[start_idx:end_idx, :] = velocity[start_idx:end_idx, :] - correction
+                # Velocity integration with ZUPT and drift correction
+                velocity = self._integrate_with_zupt_correction(acc_global_corrected, zupt_indices, self.dt)
 
                 initial_pos = np.array([0.0, 0.0, 0.0])
                 position = gu.integrate(velocity, self.dt, initial_pos=initial_pos)
-                
-                if self.heading_correction_angle[role] is None and to_indices and hs_indices:
-                    first_to_idx = to_indices[0]
-                    first_hs_idx = next( (idx for idx in hs_indices if idx > first_to_idx), None )
-                    
-                    if first_hs_idx is not None:
-                        p_to = position[first_to_idx, :2]
-                        p_hs = position[first_hs_idx, :2]
-                        step_vector = p_hs - p_to
-                        
-                        if np.linalg.norm(step_vector) > self.MIN_STEP_DISTANCE:
-                            current_angle_rad = np.arctan2(step_vector[1], step_vector[0])
-                            self.heading_correction_angle[role] = self.TARGET_HEADING_ANGLE - current_angle_rad
-                            logger.info(f"[{role}] Heading correction angle set: {np.degrees(self.heading_correction_angle[role]):.1f} degrees")
 
-                if self.heading_correction_angle[role] is not None:
-                    angle = self.heading_correction_angle[role]
-                    c, s = np.cos(angle), np.sin(angle)
-                    R = np.array([[c, -s], [s, c]])
-                    initial_pos_xy = initial_pos[:2] 
-                    pos_xy_centered = position[:, :2] - initial_pos_xy
-                    pos_xy_rotated = pos_xy_centered @ R.T
-                    position[:, :2] = pos_xy_rotated + initial_pos_xy
+                # Apply heading correction (use first stride TO-HS for angle calculation)
+                if to_indices and hs_indices:
+                    first_to_idx = to_indices[0]
+                    first_hs_idx = next((idx for idx in hs_indices if idx > first_to_idx), None)
+                    if first_hs_idx is not None:
+                        position = self._apply_heading_correction(role, position, first_to_idx, first_hs_idx, initial_pos)
 
                 if to_indices and len(zupt_indices) > 1:
                     last_zupt_idx = zupt_indices[-1]
