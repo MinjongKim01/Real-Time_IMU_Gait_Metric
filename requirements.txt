@@ -1,0 +1,21 @@
+# Real-Time IMU Gait Analysis - Production Dependencies
+# Python 3.8+
+
+# Core numerical and scientific computing
+numpy>=1.21.0,<2.0.0
+scipy>=1.7.0,<2.0.0
+
+# Visualization
+matplotlib>=3.4.0,<4.0.0
+
+# Configuration
+PyYAML>=6.0,<7.0
+
+# Input handling
+pynput>=1.7.0,<2.0.0
+
+# Movella DOT SDK
+# Note: movelladot_pc_sdk must be installed separately from Movella
+# Download from: https://www.movella.com/support/software-documentation
+# Installation: pip install path/to/movelladot_pc_sdk-*.whl
+movelladot-pc-sdk>=2022.0
