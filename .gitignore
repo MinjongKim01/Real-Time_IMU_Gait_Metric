@@ -43,3 +43,7 @@ Thumbs.db
 # Data files (uncomment if needed)
 # *.csv
 # *.dat
+
+# Claude
+.claude/
+claude.md
