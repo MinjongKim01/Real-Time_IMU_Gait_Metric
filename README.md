@@ -15,7 +15,7 @@ Real-time gait analysis system using foot-mounted Movella DOT IMU sensors with Z
 
 ## System Requirements
 
-- Python 3.8 or higher
+- Python 3.8 or 3.9, 3.10
 - Windows, or Linux
 - Bluetooth adapter for wireless sensor communication
 - Movella DOT IMU sensors (minimum 2 for bilateral gait analysis)
@@ -351,14 +351,6 @@ flake8 *.py
 black *.py
 ```
 
-## Citation
-
-If you use this code in your research, please cite:
-
-```
-[Your citation information here]
-```
-
 ## Contact
 
 For questions or support, please contact:
@@ -377,4 +369,5 @@ For questions or support, please contact:
 - YAML-based configuration system
 - Comprehensive logging framework
 - Modular architecture with DeviceManager
+
 
