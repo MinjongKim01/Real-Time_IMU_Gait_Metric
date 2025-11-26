@@ -2,6 +2,14 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.widgets import Button
 import numpy as np
+from logging_config import get_logger
+from config_loader import get_config
+
+# Initialize logger
+logger = get_logger(__name__)
+
+# Initialize config
+config = get_config()
 
 class RealTimeVisualizer:
     def __init__(self, sensor_roles=["left", "right"]):
@@ -146,27 +154,28 @@ class RealTimeVisualizer:
         self.reset_button = Button(ax_reset_btn, 'Reset Data')
         self.reset_button.on_clicked(self._on_reset)
 
+        animation_interval = config.get('performance.animation_interval_ms', 100)
         self.anim = animation.FuncAnimation(
             self.fig,
             self._update,
             fargs=(analyzer,),
-            interval=self.ANIMATION_INTERVAL,  # 최적화: 상수 사용
+            interval=animation_interval,
             cache_frame_data=False
         )
 
-        print("Plotter thread started. Displaying window...")
-        
+        logger.info("Plotter thread started. Displaying window...")
+
         try:
-            plt.show() 
+            plt.show()
         except Exception as e:
-            print(f"Plot window error: {e}")
+            logger.error(f"Plot window error: {e}")
         finally:
             self._is_closed = True 
 
     def _on_reset(self, event):
-        print("Reset button clicked.")
+        logger.info("Reset button clicked.")
 
-        # XdpcHandler의 패킷 버퍼도 함께 클리어
+        # Clear XdpcHandler's packet buffers as well
         if self.xdpc_handler_ref:
             self.xdpc_handler_ref.clear_packet_buffers()
 
@@ -202,16 +211,16 @@ class RealTimeVisualizer:
 
 
     def _update(self, frame, analyzer):
-        
+
         try:
             analyzer.update_realtime_analysis()
         except Exception as e:
-            print(f"Error during realtime analysis update: {e}")
-            
+            logger.error(f"Error during realtime analysis update: {e}")
+
         try:
             realtime_data = analyzer.get_realtime_data()
         except Exception as e:
-            print(f"Error getting realtime plot data: {e}")
+            logger.error(f"Error getting realtime plot data: {e}")
             return
             
         if not realtime_data:
@@ -355,7 +364,7 @@ class RealTimeVisualizer:
             ax.set_xlim(0, self.analyzer_ref.realtime_window_sec)
 
     def _on_close(self, event):
-        print("Plot window closed by user.")
+        logger.info("Plot window closed by user.")
         self._is_closed = True
 
     def is_window_closed(self):

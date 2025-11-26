@@ -1,0 +1,107 @@
+# Real-Time IMU Gait Analysis System Configuration
+
+sensors:
+  # Sampling rate in Hz (supported: 1, 4, 10, 12, 15, 20, 30, 60, 120)
+  sampling_rate: 60
+
+  # Filter profile for onboard processing
+  filter_profile: "General"
+
+  # Sensor mapping: MAC address -> role
+  mapping:
+    "D4:22:CD:00:8D:01": "left"
+    "D4:22:CD:00:86:04": "right"
+
+discovery:
+  # Timeout for device scanning in seconds
+  scan_timeout_sec: 20
+
+  # Enable connection retry on failure
+  retry_connection: true
+
+analysis:
+  # Realtime analysis window duration in seconds
+  realtime_window_sec: 10.0
+
+  # Lowpass filter cutoff frequency in Hz
+  filter_cutoff_hz: 5
+
+  # Gait event detection threshold in deg/s
+  gait_detection_threshold: 100
+
+  # Minimum step distance for heading correction in meters
+  min_step_distance: 0.1
+
+  # Target heading angle in radians (π/2 = 90°, forward direction)
+  target_heading_rad: 1.5708  # π/2
+
+  # Gravity constant in m/s²
+  gravity: 9.81
+
+performance:
+  # Main loop sleep duration in seconds
+  main_loop_sleep_sec: 0.005
+
+  # Maximum packet buffer size per device
+  max_packet_buffer_size: 500
+
+  # Animation update interval in milliseconds
+  animation_interval_ms: 100
+
+visualization:
+  # Figure dimensions
+  figure_width: 18
+  figure_height: 10
+
+  # Trajectory plot bounds
+  trajectory:
+    x_min: -4
+    x_max: 4
+    y_min: -2
+    y_max: 6
+
+  # Gyroscope plot bounds (deg/s)
+  gyro:
+    y_min: -500
+    y_max: 500
+
+  # Acceleration plot bounds (m/s²)
+  acceleration:
+    y_min: -30
+    y_max: 30
+
+  # Font sizes
+  title_font_size: 14
+  label_font_size: 12
+  tick_font_size: 10
+  legend_font_size: 10
+
+  # Marker sizes
+  event_marker_size: 100
+
+  # Colors for left and right sensors
+  colors:
+    left: "blue"
+    right: "red"
+
+  # vline object pool size for optimization
+  max_vlines_pool: 20
+
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+
+  # Log format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+  # Date format
+  date_format: "%Y-%m-%d %H:%M:%S"
+
+  # Log to file (leave empty for console only)
+  file: ""
+
+  # File rotation (max bytes, 0 for no rotation)
+  max_bytes: 10485760  # 10MB
+
+  # Number of backup files
+  backup_count: 3

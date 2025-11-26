@@ -32,7 +32,15 @@ from collections import defaultdict, deque
 from threading import Lock
 from pynput import keyboard
 from user_settings import *
+from logging_config import get_logger
+from config_loader import get_config
 import time
+
+# Initialize logger
+logger = get_logger(__name__)
+
+# Initialize config
+config = get_config()
 
 waitForConnections = True
 
@@ -43,10 +51,13 @@ def on_press(key):
 
 
 class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
-    def __init__(self, max_buffer_size=500):
+    def __init__(self, max_buffer_size=None):
         movelladot_pc_sdk.XsDotCallback.__init__(self)
 
-        self.__manager = 0
+        if max_buffer_size is None:
+            max_buffer_size = config.get('performance.max_packet_buffer_size', 500)
+
+        self.__manager = None
 
         self.__lock = Lock()
         self.__errorReceived = False
@@ -62,7 +73,7 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         self.__connectedDots = list()
         self.__connectedUsbDots = list()
         self.__maxNumberOfPacketsInBuffer = max_buffer_size
-        # 최적화: list 대신 deque 사용 (pop(0) 대신 popleft()로 O(1) 성능)
+        # Optimization: Use deque instead of list (O(1) popleft() instead of O(n) pop(0))
         self.__packetBuffer = defaultdict(deque)
         self.__progress = dict()
 
@@ -81,12 +92,12 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         # Print SDK version
         version = movelladot_pc_sdk.XsVersion()
         movelladot_pc_sdk.xsdotsdkDllVersion(version)
-        print(f"Using Movella DOT SDK version: {version.toXsString()}")
+        logger.info(f"Using Movella DOT SDK version: {version.toXsString()}")
 
         # Create connection manager
         self.__manager = movelladot_pc_sdk.XsDotConnectionManager()
         if self.__manager is None:
-            print("Manager could not be constructed, exiting.")
+            logger.error("Manager could not be constructed, exiting.")
             return False
 
         # Attach callback handler (self) to connection manager
@@ -97,11 +108,11 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         """
         Close connections to any Movella DOT devices and destructs the connection manager created in initialize
         """
-        print("Closing ports...")
+        logger.info("Closing ports...")
         self.__closing = True
         self.__manager.close()
 
-        print("Successful exit.")
+        logger.info("Successful exit.")
 
     def scanForDots(self):
         """
@@ -319,7 +330,7 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         for address in list(self.__packetBuffer.keys()):
             self.__packetBuffer[address].clear()
         self.__lock.release()
-        print("XdpcHandler: Packet buffers cleared.")
+        logger.info("XdpcHandler: Packet buffers cleared.")
 
     def _outputDeviceProgress(self):
         """

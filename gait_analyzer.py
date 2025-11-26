@@ -2,10 +2,18 @@ import numpy as np
 import collections
 import threading
 import copy
-from scipy.spatial.transform import Rotation 
+from scipy.spatial.transform import Rotation
 
 import gait_utils as gu
 from user_settings import FS
+from logging_config import get_logger
+from config_loader import get_config
+
+# Initialize logger
+logger = get_logger(__name__)
+
+# Initialize config
+config = get_config()
 
 class GaitAnalyzer:
     def __init__(self, fs=FS, sensor_roles=["left", "right"]):
@@ -13,18 +21,18 @@ class GaitAnalyzer:
         self.dt = 1.0 / fs
         self.sensor_roles = sensor_roles
         self.data_buffers = {}
-        self.analysis_results = {} 
+        self.analysis_results = {}
         self.full_analysis_results = {}
         self.heading_correction_angle = {role: None for role in self.sensor_roles}
-        self.realtime_window_sec = 10.0
-        
-        # 최적화: 상수 정의
-        self.FILTER_CUTOFF = 5
+
+        # Optimization: Load constants from config
+        self.realtime_window_sec = config.get('analysis.realtime_window_sec', 10.0)
+        self.FILTER_CUTOFF = config.get('analysis.filter_cutoff_hz', 5)
         self.MIN_SAMPLES_FOR_ANALYSIS = 10
-        self.GRAVITY = 9.81  # m/s^2
-        self.GAIT_DETECTION_THRESHOLD = 100  # deg/s
-        self.MIN_STEP_DISTANCE = 0.1  # m (heading correction에 필요한 최소 step 거리)
-        self.TARGET_HEADING_ANGLE = np.pi / 2  # 90도 (전진 방향) 
+        self.GRAVITY = config.get('analysis.gravity', 9.81)  # m/s²
+        self.GAIT_DETECTION_THRESHOLD = config.get('analysis.gait_detection_threshold', 100)  # deg/s
+        self.MIN_STEP_DISTANCE = config.get('analysis.min_step_distance', 0.1)  # m (minimum step distance for heading correction)
+        self.TARGET_HEADING_ANGLE = config.get('analysis.target_heading_rad', np.pi / 2)  # 90° (forward direction) 
         
         for role in self.sensor_roles:
             self.data_buffers[role] = {
@@ -178,7 +186,7 @@ class GaitAnalyzer:
                 if np.linalg.norm(step_vector) > self.MIN_STEP_DISTANCE:
                     current_angle_rad = np.arctan2(step_vector[1], step_vector[0])
                     self.heading_correction_angle[role] = self.TARGET_HEADING_ANGLE - current_angle_rad
-                    print(f"[{role}] Heading correction angle set: {np.degrees(self.heading_correction_angle[role]):.1f} degrees")
+                    logger.info(f"[{role}] Heading correction angle set: {np.degrees(self.heading_correction_angle[role]):.1f} degrees")
             
             # Heading correction 적용
             if self.heading_correction_angle[role] is not None:
@@ -200,9 +208,9 @@ class GaitAnalyzer:
             self.accumulated_position[role] = position[hs_idx_local, :].copy()
             
             return position, to_idx_local, hs_idx_local
-            
+
         except Exception as e:
-            print(f"Error calculating stride trajectory for {role}: {e}")
+            logger.error(f"Error calculating stride trajectory for {role}: {e}")
             return None, None, None
 
     def process_data_batch(self, data_batch):
@@ -228,10 +236,10 @@ class GaitAnalyzer:
                 start_idx = max(0, n_total_samples - n_samples_to_process)
                 
                 try:
-                    # 최적화: 헬퍼 함수 사용으로 중복 제거 및 효율성 향상
+                    # Optimization: Use helper function to reduce duplication and improve efficiency
                     acc_local, gyr_local, quat_list = self._extract_buffer_slice(role, start_idx)
                 except Exception as e:
-                    print(f"Error slicing data for {role} (realtime): {e}")
+                    logger.error(f"Error slicing data for {role} (realtime): {e}")
                     continue
 
                 try:
@@ -289,14 +297,14 @@ class GaitAnalyzer:
                             continue  # 아직 HS가 안 나왔으면 다음 업데이트 대기
                         
                         hs_idx = next_hs_candidates[0]
-                        
-                        # 이미 처리한 stride인지 한번 더 확인 (정확한 매칭)
+
+                        # Check again if this stride was already processed (exact matching)
                         last_proc = self.last_processed_stride[role]
                         if last_proc["to_idx"] == to_idx and last_proc["hs_idx"] == hs_idx:
-                            continue  # 이미 처리함
-                        
-                        # 새로운 stride 발견 - trajectory 계산
-                        print(f"[{role}] New stride detected: TO={to_idx}, HS={hs_idx}")
+                            continue  # Already processed
+
+                        # New stride detected - calculate trajectory
+                        logger.debug(f"[{role}] New stride detected: TO={to_idx}, HS={hs_idx}")
                         
                         position, to_pos_idx, hs_pos_idx = self._calculate_stride_trajectory(role, to_idx, hs_idx)
                         
@@ -317,38 +325,38 @@ class GaitAnalyzer:
                                 self.analysis_results[role]["position_to_idx"].append(prev_len + to_pos_idx)
                                 self.analysis_results[role]["position_hs_idx"].append(prev_len + hs_pos_idx)
                             
-                            # 처리 완료 표시
+                            # Mark as processed
                             self.last_processed_stride[role]["to_idx"] = to_idx
                             self.last_processed_stride[role]["hs_idx"] = hs_idx
-                            
-                            print(f"[{role}] Stride trajectory calculated. Total positions: {len(self.analysis_results[role]['position'])}")
+
+                            logger.debug(f"[{role}] Stride trajectory calculated. Total positions: {len(self.analysis_results[role]['position'])}")
 
 
     def run_full_trajectory_analysis(self):
         with self.lock:
-            print("Starting full trajectory analysis...")
-            # 최적화: 필요한 데이터만 복사 (deepcopy 대신 얕은 복사)
+            logger.info("Starting full trajectory analysis...")
+            # Optimization: Copy only necessary data (shallow copy instead of deepcopy)
             local_buffer_sizes = {role: len(self.data_buffers[role]["timestamp"]) for role in self.sensor_roles}
             self.heading_correction_angle = {role: None for role in self.sensor_roles}
 
             for role in self.sensor_roles:
                 n_samples = local_buffer_sizes[role]
-                if n_samples < self.fs * 1.0: 
-                    print(f"Not enough data for {role} to analyze.")
+                if n_samples < self.fs * 1.0:
+                    logger.warning(f"Not enough data for {role} to analyze.")
                     continue
-                
-                print(f"Analyzing {role} with {n_samples} samples...")
+
+                logger.info(f"Analyzing {role} with {n_samples} samples...")
                 
                 try:
-                    # 최적화: 헬퍼 함수로 효율적인 데이터 추출
+                    # Optimization: Use helper function for efficient data extraction
                     acc_local, gyr_local, quat_list = self._extract_buffer_slice(role, 0, n_samples)
-                    
-                    # 최적화: 공통 함수로 quaternion 변환
+
+                    # Optimization: Convert quaternion using common function
                     orientations = self._convert_quaternions_to_rotations(quat_list)
-                    
+
                     time_array = np.arange(n_samples) / self.fs
                 except Exception as e:
-                    print(f"Error preparing full data for {role}: {e}")
+                    logger.error(f"Error preparing full data for {role}: {e}")
                     continue
                 
                 # 최적화: 상수 사용
@@ -414,7 +422,7 @@ class GaitAnalyzer:
                         if np.linalg.norm(step_vector) > self.MIN_STEP_DISTANCE:
                             current_angle_rad = np.arctan2(step_vector[1], step_vector[0])
                             self.heading_correction_angle[role] = self.TARGET_HEADING_ANGLE - current_angle_rad
-                            print(f"[{role}] Heading correction angle set: {np.degrees(self.heading_correction_angle[role]):.1f} degrees")
+                            logger.info(f"[{role}] Heading correction angle set: {np.degrees(self.heading_correction_angle[role]):.1f} degrees")
 
                 if self.heading_correction_angle[role] is not None:
                     angle = self.heading_correction_angle[role]
@@ -441,8 +449,8 @@ class GaitAnalyzer:
                 self.full_analysis_results[role]["position"] = final_position[:last_analysis_idx]
                 self.full_analysis_results[role]["heel_strikes_idx"] = [idx for idx in hs_indices if idx < last_analysis_idx]
                 self.full_analysis_results[role]["toe_offs_idx"] = [idx for idx in to_indices if idx < last_analysis_idx]
-            
-            print("Full trajectory analysis finished.")
+
+            logger.info("Full trajectory analysis finished.")
 
     def get_realtime_data(self):
         with self.lock:
@@ -475,7 +483,7 @@ class GaitAnalyzer:
         
     def reset_data(self):
         with self.lock:
-            print("Resetting gait analyzer data...")
+            logger.info("Resetting gait analyzer data...")
             self.heading_correction_angle = {role: None for role in self.sensor_roles}
             self.last_processed_stride = {role: {"to_idx": None, "hs_idx": None} for role in self.sensor_roles}
             self.accumulated_position = {role: np.array([0.0, 0.0, 0.0]) for role in self.sensor_roles}
