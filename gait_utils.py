@@ -1,21 +1,22 @@
 import numpy as np
+from typing import List, Dict, Optional, Any
 from scipy.signal import butter, filtfilt, find_peaks
 from scipy.integrate import cumulative_trapezoid
 
-# 최적화: 상수 정의
+# Optimization: Define constants
 DEFAULT_FILTER_ORDER = 5
 MIN_PADLEN_MULTIPLIER = 3  # padlen = 3 * (2 * order)
 
-# Gait event detection 상수
+# Gait event detection constants
 DEFAULT_GAIT_THRESHOLD = 80  # deg/s (gyro z-axis threshold)
-MIN_EVENT_DISTANCE_SAMPLES = 30  # 이벤트 간 최소 거리
-MIN_FILTERED_EVENT_DISTANCE = 15  # 필터링 후 이벤트 간 최소 거리
-MAX_PEAK_CLUSTER_DISTANCE = 10  # peak 클러스터링 거리
-LOOKAHEAD_SAMPLES = 8  # threshold 교차 판단 lookahead
-HEELSTRIKE_TIME_WINDOW = (0.3, 0.6)  # toe-off 대비 heel-strike 시간 윈도우 비율
-MIDSTANCE_RATIO = 0.3  # heel-strike 사이클에서 mid-stance 비율
+MIN_EVENT_DISTANCE_SAMPLES = 30  # Minimum distance between events
+MIN_FILTERED_EVENT_DISTANCE = 15  # Minimum distance between events after filtering
+MAX_PEAK_CLUSTER_DISTANCE = 10  # Peak clustering distance
+LOOKAHEAD_SAMPLES = 8  # Lookahead for threshold crossing detection
+HEELSTRIKE_TIME_WINDOW = (0.3, 0.6)  # Heel-strike time window ratio relative to toe-off
+MIDSTANCE_RATIO = 0.3  # Mid-stance ratio in heel-strike cycle
 
-def butter_lowpass_filter(data: np.ndarray, cutoff: float, fs: float, order: int = DEFAULT_FILTER_ORDER):
+def butter_lowpass_filter(data: np.ndarray, cutoff: float, fs: float, order: int = DEFAULT_FILTER_ORDER) -> np.ndarray:
     if len(data) == 0:
         return np.array([])
         
@@ -37,11 +38,22 @@ def butter_lowpass_filter(data: np.ndarray, cutoff: float, fs: float, order: int
         print(f"Filtering failed: {e}. Returning unfiltered data.")
         return data
 
-def integrate(data: np.ndarray, dt: float, initial_pos: np.ndarray = None) -> np.ndarray:
+def integrate(data: np.ndarray, dt: float, initial_pos: Optional[np.ndarray] = None) -> np.ndarray:
+    """
+    Integrate data using cumulative trapezoidal method.
+
+    Args:
+        data: Data to integrate [N, M]
+        dt: Time step
+        initial_pos: Initial position offset [M]
+
+    Returns:
+        Integrated data [N, M]
+    """
     integrated_data = cumulative_trapezoid(data, dx=dt, axis=0, initial=0)
     if initial_pos is not None:
-        integrated_data = integrated_data + initial_pos # [N, 3] + [3,] -> [N, 3]
-        
+        integrated_data = integrated_data + initial_pos  # [N, 3] + [3,] -> [N, 3]
+
     return integrated_data
 
 def detect_gait_events(
@@ -49,7 +61,7 @@ def detect_gait_events(
     time_array: np.ndarray,
     threshold: int = DEFAULT_GAIT_THRESHOLD,
     max_distance: int = MAX_PEAK_CLUSTER_DISTANCE,
-):
+) -> List[Dict[str, Any]]:
     threshold_indices = []
     for i in range(1, len(gyro_z) - LOOKAHEAD_SAMPLES):
         if (gyro_z[i] >= threshold and gyro_z[i + 1] < threshold):
@@ -162,12 +174,20 @@ def detect_gait_events(
     return final_events
 
 
-def detect_midstance_indices(hs_indices):
-    """heel-strike 인덱스로부터 mid-stance 인덱스 추정"""
-    zmpt = []
+def detect_midstance_indices(hs_indices: List[int]) -> List[int]:
+    """
+    Estimate mid-stance indices from heel-strike indices.
+
+    Args:
+        hs_indices: List of heel-strike indices
+
+    Returns:
+        List of mid-stance indices
+    """
+    midstance_indices = []
     for i in range(len(hs_indices) - 1):
         cycle_start = hs_indices[i]
         cycle_end = hs_indices[i + 1]
         zmpt_idx = cycle_start + int(MIDSTANCE_RATIO * (cycle_end - cycle_start))
-        zmpt.append(zmpt_idx)
-    return zmpt
+        midstance_indices.append(zmpt_idx)
+    return midstance_indices

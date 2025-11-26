@@ -16,9 +16,9 @@ class RealTimeVisualizer:
         self.sensor_roles = sensor_roles
         self.colors = {"left": "blue", "right": "red"}
         self.fig = None
-        
-        # 최적화: 상수 정의
-        self.MAX_VLINES_POOL = 20  # vline 객체 풀 최대 크기
+
+        # Optimization: Define constants
+        self.MAX_VLINES_POOL = 20  # Maximum size of vline object pool
         self.ANIMATION_INTERVAL = 100  # ms
         
         self.ax_traj_l = None 
@@ -31,13 +31,13 @@ class RealTimeVisualizer:
         self.traj_lines = {}
         self.traj_hs_scatters = {}
         self.traj_to_scatters = {}
-        self.traj_stride_annotations = {}  # stride length 표시용 annotation 저장
-        
+        self.traj_stride_annotations = {}  # Store annotations for stride length display
+
         self.gyro_lines = {}
-        # 최적화: vline 객체 풀 (재사용)
+        # Optimization: vline object pool (for reuse)
         self.gyro_hs_vlines_pool = {role: [] for role in sensor_roles}
         self.gyro_to_vlines_pool = {role: [] for role in sensor_roles}
-        self.gyro_hs_vlines_active = {role: 0 for role in sensor_roles}  # 활성 vline 수
+        self.gyro_hs_vlines_active = {role: 0 for role in sensor_roles}  # Number of active vlines
         self.gyro_to_vlines_active = {role: 0 for role in sensor_roles}
         
         self.acc_lines = {role: {} for role in sensor_roles} 
@@ -49,31 +49,31 @@ class RealTimeVisualizer:
         self.xdpc_handler_ref = None
     
     def _create_vline_pool(self, ax, pool_list, color, linestyle='--'):
-        """vline 객체 풀을 미리 생성 (재사용용)"""
+        """Pre-create vline object pool (for reuse)"""
         for _ in range(self.MAX_VLINES_POOL):
             line = ax.axvline(0, color=color, linestyle=linestyle, linewidth=1, visible=False)
             pool_list.append(line)
-    
+
     def _update_vlines(self, pool_list, active_count_dict, role, time_values):
-        """vline 객체를 재사용하여 업데이트 (remove/create 없음)"""
+        """Update vlines by reusing objects (no remove/create)"""
         n_events = len(time_values)
-        
-        # 풀 크기가 부족하면 확장
+
+        # Expand pool if size is insufficient
         while len(pool_list) < n_events:
             ax = self.ax_gyro_l if role == "left" else self.ax_gyro_r
             color = 'red' if pool_list == self.gyro_hs_vlines_pool[role] else 'blue'
             line = ax.axvline(0, color=color, linestyle='--', linewidth=1, visible=False)
             pool_list.append(line)
-        
-        # 필요한 만큼 활성화 및 위치 업데이트
+
+        # Activate and update positions as needed
         for i, t in enumerate(time_values):
             pool_list[i].set_xdata([t, t])
             pool_list[i].set_visible(True)
-        
-        # 나머지는 비활성화
+
+        # Deactivate the rest
         for i in range(n_events, len(pool_list)):
             pool_list[i].set_visible(False)
-        
+
         active_count_dict[role] = n_events
         
     def start(self, analyzer, xdpc_handler=None):
@@ -98,10 +98,10 @@ class RealTimeVisualizer:
             ax.set_xlabel("X (m)", fontsize=label_fontsize)
             ax.set_ylabel("Y (m)", fontsize=label_fontsize)
             ax.tick_params(labelsize=tick_fontsize)
-            ax.set_aspect('auto')  # 세로축 스케일 확대를 위해 auto로 변경
+            ax.set_aspect('auto')  # Change to auto to expand vertical axis scale
             ax.grid(True, linestyle='--', alpha=0.6)
-            ax.set_xlim(-4, 4) 
-            ax.set_ylim(-2, 6)  # y축 범위 변경: -7~7 -> -2~6 
+            ax.set_xlim(-4, 4)
+            ax.set_ylim(-2, 6)  # Y-axis range changed: -7~7 -> -2~6 
 
         self.ax_gyro_l = self.fig.add_subplot(gs[0, 0])
         self.ax_gyro_r = self.fig.add_subplot(gs[1, 0])
@@ -130,20 +130,20 @@ class RealTimeVisualizer:
             self.traj_hs_scatters[role] = ax_traj.scatter([], [], marker='x', s=100, label="HS", color=traj_color)
             self.traj_to_scatters[role] = ax_traj.scatter([], [], marker='o', s=100, label="TO", facecolors='none', edgecolors=traj_color)
             ax_traj.legend(fontsize=legend_fontsize)
-            
-            # stride length annotation 초기화
+
+            # Initialize stride length annotations
             self.traj_stride_annotations[role] = []
-            
+
             ax_gyro = self.ax_gyro_l if role == "left" else self.ax_gyro_r
             self.gyro_lines[role], = ax_gyro.plot([], [], lw=1.5, label="z-axis Gyro", color='black', alpha=0.8)
-            
+
             ax_acc = self.ax_acc_l if role == "left" else self.ax_acc_r
             self.acc_lines[role]['x'], = ax_acc.plot([], [], lw=1, label=f"x-axis", color='red', alpha=0.7)
             self.acc_lines[role]['y'], = ax_acc.plot([], [], lw=1, label=f"y-axis", color='green', alpha=0.7)
             self.acc_lines[role]['z'], = ax_acc.plot([], [], lw=1, label=f"z-axis", color='blue', alpha=0.7)
             ax_acc.legend(loc='upper right', fontsize=legend_fontsize)
-            
-            # 최적화: vline 객체 풀 초기화
+
+            # Optimization: Initialize vline object pool
             ax_gyro = self.ax_gyro_l if role == "left" else self.ax_gyro_r
             self._create_vline_pool(ax_gyro, self.gyro_hs_vlines_pool[role], color='red')
             self._create_vline_pool(ax_gyro, self.gyro_to_vlines_pool[role], color='blue')
@@ -186,15 +186,15 @@ class RealTimeVisualizer:
             self.traj_lines[role].set_data([], [])
             self.traj_hs_scatters[role].set_offsets(np.empty((0, 2)))
             self.traj_to_scatters[role].set_offsets(np.empty((0, 2)))
-            
-            # stride length annotation 제거
+
+            # Remove stride length annotations
             for ann in self.traj_stride_annotations[role]:
                 ann.remove()
             self.traj_stride_annotations[role] = []
-            
+
             self.gyro_lines[role].set_data([], [])
-            
-            # 최적화: vline 제거 대신 비활성화 (재사용)
+
+            # Optimization: Deactivate instead of removing vlines (for reuse)
             for line in self.gyro_hs_vlines_pool[role]:
                 line.set_visible(False)
             for line in self.gyro_to_vlines_pool[role]:
@@ -254,85 +254,85 @@ class RealTimeVisualizer:
                 ax_acc = self.ax_acc_r
                 ax_traj = self.ax_traj_r
 
-            # Gyro plot 업데이트
+            # Update Gyro plot
             self.gyro_lines[role].set_data(time_array, gyr_z_signal)
-            
-            # 최적화: vline 객체를 제거/재생성하지 않고 재사용
+
+            # Optimization: Reuse vline objects without removing/recreating
             if hs_indices:
                 hs_times = time_array[hs_indices]
-                self._update_vlines(self.gyro_hs_vlines_pool[role], 
+                self._update_vlines(self.gyro_hs_vlines_pool[role],
                                    self.gyro_hs_vlines_active, role, hs_times)
             else:
-                self._update_vlines(self.gyro_hs_vlines_pool[role], 
+                self._update_vlines(self.gyro_hs_vlines_pool[role],
                                    self.gyro_hs_vlines_active, role, [])
 
             if to_indices:
                 to_times = time_array[to_indices]
-                self._update_vlines(self.gyro_to_vlines_pool[role], 
+                self._update_vlines(self.gyro_to_vlines_pool[role],
                                    self.gyro_to_vlines_active, role, to_times)
             else:
-                self._update_vlines(self.gyro_to_vlines_pool[role], 
+                self._update_vlines(self.gyro_to_vlines_pool[role],
                                    self.gyro_to_vlines_active, role, [])
-            
-            # Acc plot 업데이트
+
+            # Update Acc plot
             if acc_xyz_signal.shape[0] > 0 and acc_xyz_signal.shape[1] == 3:
                 self.acc_lines[role]['x'].set_data(time_array, acc_xyz_signal[:, 0])
                 self.acc_lines[role]['y'].set_data(time_array, acc_xyz_signal[:, 1])
                 self.acc_lines[role]['z'].set_data(time_array, acc_xyz_signal[:, 2])
             
-            # Trajectory plot 업데이트 (실시간)
+            # Update Trajectory plot (realtime)
             if position.size > 0:
                 self.traj_lines[role].set_data(position[:, 0], position[:, 1])
-                
-                # HS 마커 업데이트
+
+                # Update HS markers
                 if position_hs_idx:
                     hs_positions = position[position_hs_idx, :2]
                     self.traj_hs_scatters[role].set_offsets(hs_positions)
                 else:
                     self.traj_hs_scatters[role].set_offsets(np.empty((0, 2)))
-                
-                # TO 마커 업데이트
+
+                # Update TO markers
                 if position_to_idx:
                     to_positions = position[position_to_idx, :2]
                     self.traj_to_scatters[role].set_offsets(to_positions)
                 else:
                     self.traj_to_scatters[role].set_offsets(np.empty((0, 2)))
-                
-                # Stride length annotation 업데이트
-                # 기존 annotation 제거
+
+                # Update stride length annotations
+                # Remove existing annotations
                 for ann in self.traj_stride_annotations[role]:
                     ann.remove()
                 self.traj_stride_annotations[role] = []
-                
-                # 새로운 stride length 계산 및 표시
+
+                # Calculate and display new stride lengths
                 if len(position_hs_idx) >= 2:
                     for i in range(1, len(position_hs_idx)):
                         prev_hs_idx = position_hs_idx[i-1]
                         curr_hs_idx = position_hs_idx[i]
-                        
-                        # 두 HS 점의 좌표
+
+                        # Coordinates of the two HS points
                         prev_hs_pos = position[prev_hs_idx, :2]
                         curr_hs_pos = position[curr_hs_idx, :2]
-                        
-                        # Stride length 계산 (XY 평면상 직선거리)
+
+                        # Calculate stride length (Euclidean distance in XY plane)
                         stride_length = np.linalg.norm(curr_hs_pos - prev_hs_pos)
-                        
-                        # 텍스트 위치: 끝 HS 점에서 약간 오프셋
-                        # 이전 HS에서 현재 HS로의 방향 벡터에 수직인 방향으로 오프셋
+
+                        # Text position: slightly offset from the ending HS point
+                        # Offset in the direction perpendicular to the vector from previous HS to current HS
                         direction_vec = curr_hs_pos - prev_hs_pos
                         if np.linalg.norm(direction_vec) > 0:
                             direction_vec = direction_vec / np.linalg.norm(direction_vec)
-                            # 90도 회전 (수직 방향)
+                            # 90 degree rotation (perpendicular direction)
                             perpendicular_vec = np.array([-direction_vec[1], direction_vec[0]])
-                            text_offset = perpendicular_vec * 0.2  # 15cm 오프셋
+                            text_offset = perpendicular_vec * 0.2  # 20cm offset
                         else:
                             text_offset = np.array([0.2, 0])
-                        
+
                         text_pos = curr_hs_pos + text_offset
-                        
-                        # 텍스트 표시
+
+                        # Display text
                         text_ann = ax_traj.text(
-                            text_pos[0], text_pos[1], 
+                            text_pos[0], text_pos[1],
                             f"{stride_length:.2f} m",
                             fontsize=10,
                             ha='left',
@@ -340,17 +340,17 @@ class RealTimeVisualizer:
                             color=self.colors.get(role, "gray"),
                             bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor=self.colors.get(role, "gray"), alpha=0.7)
                         )
-                        
-                        # 연결선 표시 (HS 점에서 텍스트까지)
+
+                        # Display connecting line (from HS point to text)
                         line_ann, = ax_traj.plot(
-                            [curr_hs_pos[0], text_pos[0]], 
+                            [curr_hs_pos[0], text_pos[0]],
                             [curr_hs_pos[1], text_pos[1]],
                             color=self.colors.get(role, "gray"),
                             linestyle=':',
                             linewidth=0.8,
                             alpha=0.5
                         )
-                        
+
                         self.traj_stride_annotations[role].append(text_ann)
                         self.traj_stride_annotations[role].append(line_ann)
                 

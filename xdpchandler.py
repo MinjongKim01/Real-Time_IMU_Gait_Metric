@@ -30,6 +30,7 @@
 import movelladot_pc_sdk
 from collections import defaultdict, deque
 from threading import Lock
+from typing import Optional, Dict, List, Any
 from pynput import keyboard
 from user_settings import *
 from logging_config import get_logger
@@ -51,7 +52,7 @@ def on_press(key):
 
 
 class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
-    def __init__(self, max_buffer_size=None):
+    def __init__(self, max_buffer_size: Optional[int] = None):
         movelladot_pc_sdk.XsDotCallback.__init__(self)
 
         if max_buffer_size is None:
@@ -69,15 +70,15 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         self.__progressTotal = 0
         self.__packetsReceived = 0
 
-        self.__detectedDots = list()
-        self.__connectedDots = list()
-        self.__connectedUsbDots = list()
-        self.__maxNumberOfPacketsInBuffer = max_buffer_size
+        self.__detectedDots: List = list()
+        self.__connectedDots: List = list()
+        self.__connectedUsbDots: List = list()
+        self.__maxNumberOfPacketsInBuffer: int = max_buffer_size
         # Optimization: Use deque instead of list (O(1) popleft() instead of O(n) pop(0))
-        self.__packetBuffer = defaultdict(deque)
-        self.__progress = dict()
+        self.__packetBuffer: Dict[str, deque] = defaultdict(deque)
+        self.__progress: Dict[str, int] = dict()
 
-    def initialize(self):
+    def initialize(self) -> bool:
         """
         Initialize the PC SDK
 
@@ -104,7 +105,7 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         self.__manager.addXsDotCallbackHandler(self)
         return True
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """
         Close connections to any Movella DOT devices and destructs the connection manager created in initialize
         """
@@ -114,7 +115,7 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
 
         logger.info("Successful exit.")
 
-    def scanForDots(self):
+    def scanForDots(self) -> None:
         """
         Scan if any Movella DOT devices can be detected via Bluetooth
 
@@ -145,7 +146,7 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         self.__manager.disableDeviceDetection()
         print("Stopped scanning for devices.")
 
-    def connectDots(self):
+    def connectDots(self) -> None:
         """
         Connects to Movella DOTs found via either USB or Bluetooth connection
 
@@ -187,81 +188,81 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
                 self.__connectedUsbDots.append(device)
                 print(f"Device: {device.productCode()}, with ID: {device.deviceId().toXsString()} opened.")
 
-    def detectUsbDevices(self):
+    def detectUsbDevices(self) -> None:
         """
         Scans for USB connected Movella DOT devices for data export
         """
         print("Scanning for devices...")
         self.__detectedDots = self.__manager.detectUsbDevices()
 
-    def manager(self):
+    def manager(self) -> Any:
         """
         Returns:
              A pointer to the XsDotConnectionManager
         """
         return self.__manager
 
-    def detectedDots(self):
+    def detectedDots(self) -> List:
         """
         Returns:
              An XsPortInfoArray containing information on detected Movella DOT devices
         """
         return self.__detectedDots
 
-    def connectedDots(self):
+    def connectedDots(self) -> List:
         """
         Returns:
             A list containing an XsDotDevice pointer for each Movella DOT device connected via Bluetooth
         """
         return self.__connectedDots
 
-    def connectedUsbDots(self):
+    def connectedUsbDots(self) -> List:
         """
         Returns:
              A list containing an XsDotUsbDevice pointer for each Movella DOT device connected via USB */
         """
         return self.__connectedUsbDots
 
-    def errorReceived(self):
+    def errorReceived(self) -> bool:
         """
         Returns:
              True if an error was received through the onError callback
         """
         return self.__errorReceived
 
-    def exportDone(self):
+    def exportDone(self) -> bool:
         """
         True if the export has finished
         """
         return self.__exportDone
 
-    def updateDone(self):
+    def updateDone(self) -> bool:
         """
         Returns:
              Whether update done was received through the onDeviceUpdateDone callback
         """
         return self.__updateDone
 
-    def resetUpdateDone(self):
+    def resetUpdateDone(self) -> None:
         """
         Resets the update done member variable to be ready for a next device update
         """
         self.__updateDone = False
 
-    def recordingStopped(self):
+    def recordingStopped(self) -> bool:
         """
         Returns:
              True if the device indicated the recording has stopped
         """
         return self.__recordingStopped
 
-    def resetRecordingStopped(self):
+    def resetRecordingStopped(self) -> None:
         """
         Resets the recording stopped member variable to be ready for a next recording
         """
         self.__recordingStopped = False
 
-    def packetsAvailable(self):
+    def packetsAvailable(self) -> bool:
         """
         Returns:
              True if a data packet is available for each of the connected Movella DOT devices
@@ -271,7 +272,7 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
                 return False
         return True
 
-    def packetAvailable(self, bluetoothAddress):
+    def packetAvailable(self, bluetoothAddress: str) -> bool:
         """
         Parameters:
             bluetoothAddress: The bluetooth address of the Movella DOT to check for a ready data packet
@@ -283,14 +284,14 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         self.__lock.release()
         return res
 
-    def packetsReceived(self):
+    def packetsReceived(self) -> int:
         """
         Returns:
              The number of packets received during data export
         """
         return self.__packetsReceived
 
-    def getNextPacket(self, bluetoothAddress):
+    def getNextPacket(self, bluetoothAddress: str) -> Optional[Any]:
         """
         Parameters:
             bluetoothAddress: The bluetooth address of the Movella DOT to get the next packet for
@@ -300,12 +301,12 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         if len(self.__packetBuffer[bluetoothAddress]) == 0:
             return None
         self.__lock.acquire()
-        # 최적화: pop(0) -> popleft() (O(n) -> O(1))
+        # Optimization: pop(0) -> popleft() (O(n) -> O(1))
         oldest_packet = movelladot_pc_sdk.XsDataPacket(self.__packetBuffer[bluetoothAddress].popleft())
         self.__lock.release()
         return oldest_packet
 
-    def addDeviceToProgressBuffer(self, bluetoothAddress):
+    def addDeviceToProgressBuffer(self, bluetoothAddress: str) -> None:
         """
         Initialize internal progress buffer for an Movella DOT device
 
@@ -314,14 +315,14 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         """
         self.__progress[bluetoothAddress] = 0
 
-    def progress(self):
+    def progress(self) -> Dict[str, int]:
         """
         Returns:
              The current progress indication of the connected Movella DOT devices
         """
         return self.__progress
     
-    def clear_packet_buffers(self):
+    def clear_packet_buffers(self) -> None:
         """
         Clear all packet buffers for all connected devices
         Useful when resetting data collection
@@ -392,7 +393,7 @@ class XdpcHandler(movelladot_pc_sdk.XsDotCallback):
         """
         self.__lock.acquire()
         while len(self.__packetBuffer[device.portInfo().bluetoothAddress()]) >= self.__maxNumberOfPacketsInBuffer:
-            # 최적화: pop(0) -> popleft() (O(n) -> O(1))
+            # Optimization: pop(0) -> popleft() (O(n) -> O(1))
             self.__packetBuffer[device.portInfo().bluetoothAddress()].popleft()
         self.__packetBuffer[device.portInfo().bluetoothAddress()].append(movelladot_pc_sdk.XsDataPacket(packet))
         self.__lock.release()

@@ -2,6 +2,7 @@ import numpy as np
 import collections
 import threading
 import copy
+from typing import Dict, List, Optional, Tuple, Any
 from scipy.spatial.transform import Rotation
 
 import gait_utils as gu
@@ -16,7 +17,9 @@ logger = get_logger(__name__)
 config = get_config()
 
 class GaitAnalyzer:
-    def __init__(self, fs=FS, sensor_roles=["left", "right"]):
+    def __init__(self, fs: int = FS, sensor_roles: List[str] = None):
+        if sensor_roles is None:
+            sensor_roles = ["left", "right"]
         self.fs = fs
         self.dt = 1.0 / fs
         self.sensor_roles = sensor_roles
@@ -44,12 +47,12 @@ class GaitAnalyzer:
             self.analysis_results[role] = {
                 "heel_strikes_idx": [],
                 "toe_offs_idx": [],
-                "gyr_z": np.array([]), 
-                "acc_xyz": np.array([]), 
+                "gyr_z": np.array([]),
+                "acc_xyz": np.array([]),
                 "time_array": np.array([]),
-                "position": np.array([]),  # 실시간 trajectory 누적 저장
-                "position_hs_idx": [],  # position 배열에서 HS 인덱스
-                "position_to_idx": [],  # position 배열에서 TO 인덱스
+                "position": np.array([]),  # Cumulative storage of realtime trajectory
+                "position_hs_idx": [],  # HS indices in position array
+                "position_to_idx": [],  # TO indices in position array
             }
             self.full_analysis_results[role] = {
                 "position": np.array([]),
@@ -57,19 +60,20 @@ class GaitAnalyzer:
                 "toe_offs_idx": [],
             }
         
-        # Stride 처리를 위한 추적 변수
+        # Tracking variables for stride processing
         self.last_processed_stride = {role: {"to_idx": None, "hs_idx": None} for role in self.sensor_roles}
         self.accumulated_position = {role: np.array([0.0, 0.0, 0.0]) for role in self.sensor_roles}
         
         self.lock = threading.Lock()
 
-    def _convert_quaternions_to_rotations(self, quat_list):
+    def _convert_quaternions_to_rotations(self, quat_list: List[List[float]]) -> Rotation:
         """Convert quaternions to Rotation objects (wxyz -> xyzw)"""
         quat_data_wxyz = np.array(quat_list)
         quat_data_xyzw = np.roll(quat_data_wxyz, -1, axis=1)
         return Rotation.from_quat(quat_data_xyzw)
 
-    def _prepare_imu_data(self, role, acc_local, gyr_local, quat_list):
+    def _prepare_imu_data(self, role: str, acc_local: np.ndarray, gyr_local: np.ndarray,
+                         quat_list: List[List[float]]) -> Tuple[np.ndarray, np.ndarray, Rotation]:
         """
         Common preprocessing: filter and transform to global frame.
 
@@ -104,7 +108,8 @@ class GaitAnalyzer:
 
         return acc_global_corrected, gyr_z, orientations
 
-    def _apply_heading_correction(self, role, position, to_idx, hs_idx, initial_pos):
+    def _apply_heading_correction(self, role: str, position: np.ndarray, to_idx: int,
+                                  hs_idx: int, initial_pos: np.ndarray) -> np.ndarray:
         """
         Calculate and apply heading correction to align trajectory to target heading.
 
@@ -138,7 +143,8 @@ class GaitAnalyzer:
 
         return position
 
-    def _integrate_with_zupt_correction(self, acc, zupt_indices, dt):
+    def _integrate_with_zupt_correction(self, acc: np.ndarray, zupt_indices: List[int],
+                                       dt: float) -> np.ndarray:
         """
         Integrate acceleration to velocity with ZUPT corrections and drift correction.
 
@@ -175,12 +181,13 @@ class GaitAnalyzer:
 
         return velocity
 
-    def _extract_buffer_slice(self, role, start_idx, end_idx=None):
-        """버퍼에서 효율적으로 데이터 슬라이스 추출"""
+    def _extract_buffer_slice(self, role: str, start_idx: int,
+                             end_idx: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, List[List[float]]]:
+        """Efficiently extract data slice from buffer"""
         buffers = self.data_buffers[role]
-        
+
         if end_idx is None:
-            # deque를 직접 슬라이싱하지 않고 itertools.islice 활용
+            # Use indexing instead of slicing deque directly
             acc_slice = np.array([buffers["acc"][i] for i in range(start_idx, len(buffers["acc"]))])
             gyr_slice = np.array([buffers["gyr"][i] for i in range(start_idx, len(buffers["gyr"]))])
             quat_slice = [buffers["quat"][i] for i in range(start_idx, len(buffers["quat"]))]
@@ -188,57 +195,58 @@ class GaitAnalyzer:
             acc_slice = np.array([buffers["acc"][i] for i in range(start_idx, end_idx)])
             gyr_slice = np.array([buffers["gyr"][i] for i in range(start_idx, end_idx)])
             quat_slice = [buffers["quat"][i] for i in range(start_idx, end_idx)]
-        
+
         return acc_slice, gyr_slice, quat_slice
     
-    def _calculate_stride_trajectory(self, role, to_global_idx, hs_global_idx):
+    def _calculate_stride_trajectory(self, role: str, to_global_idx: int,
+                                     hs_global_idx: int) -> Tuple[Optional[np.ndarray], Optional[int], Optional[int]]:
         """
-        하나의 stride에 대한 trajectory 계산 (TO에서 HS까지)
-        
+        Calculate trajectory for one stride (from TO to HS).
+
         Args:
-            role: 센서 역할 (left/right)
-            to_global_idx: 버퍼 내 toe-off 인덱스
-            hs_global_idx: 버퍼 내 heel-strike 인덱스
-        
+            role: Sensor role ('left' or 'right')
+            to_global_idx: Toe-off index in buffer
+            hs_global_idx: Heel-strike index in buffer
+
         Returns:
-            position: 계산된 position 배열 [N, 3]
-            to_pos_idx: position 배열 내 TO 인덱스
-            hs_pos_idx: position 배열 내 HS 인덱스
+            position: Calculated position array [N, 3]
+            to_pos_idx: TO index in position array
+            hs_pos_idx: HS index in position array
         """
         try:
-            # 데이터 추출
+            # Extract data
             acc_local, gyr_local, quat_list = self._extract_buffer_slice(role, to_global_idx, hs_global_idx + 1)
-            
+
             if len(acc_local) < 2:
                 return None, None, None
-            
+
             # Preprocess IMU data (filter, transform, remove gravity)
             acc_global_corrected, gyr_z, orientations = self._prepare_imu_data(role, acc_local, gyr_local, quat_list)
-            
-            # 구간 내 상대 시간 배열
+
+            # Relative time array within the interval
             n_samples = len(acc_local)
             time_array = np.arange(n_samples) / self.fs
-            
-            # Gait event 재감지 (구간 내 상대 인덱스)
+
+            # Re-detect gait events (relative indices within interval)
             events = gu.detect_gait_events(gyr_z, time_array, threshold=self.GAIT_DETECTION_THRESHOLD)
-            
-            # TO는 항상 0번 인덱스, HS는 마지막 인덱스
+
+            # TO is always index 0, HS is last index
             to_idx_local = 0
             hs_idx_local = n_samples - 1
-            
-            # Mid-stance 추정 (구간 내에서)
+
+            # Estimate mid-stance (within interval)
             ms_indices = []
             if events:
-                # 이벤트가 있으면 그 사이의 mid-stance 계산
+                # If events exist, calculate mid-stance between them
                 hs_indices_local = [e['heelstrike_idx'] for e in events]
                 if hs_indices_local:
-                    # TO와 첫 HS 사이의 mid-stance
+                    # Mid-stance between TO and first HS
                     first_hs = hs_indices_local[0]
                     if first_hs > to_idx_local:
                         ms_idx = to_idx_local + int(0.3 * (first_hs - to_idx_local))
                         ms_indices.append(ms_idx)
-                    
-                    # HS 사이의 mid-stance
+
+                    # Mid-stance between HS
                     for i in range(len(hs_indices_local) - 1):
                         cycle_start = hs_indices_local[i]
                         cycle_end = hs_indices_local[i + 1]
@@ -255,23 +263,29 @@ class GaitAnalyzer:
 
             # Apply heading correction
             position = self._apply_heading_correction(role, position, to_idx_local, hs_idx_local, initial_pos)
-            
-            # 첫 stride인 경우 TO를 원점에 정확히 맞춤
+
+            # For first stride, align TO exactly to origin
             is_first_stride = np.allclose(self.accumulated_position[role], [0.0, 0.0, 0.0])
             if is_first_stride:
                 to_offset = position[to_idx_local, :].copy()
                 position = position - to_offset
-            
-            # 다음 stride를 위해 마지막 position 저장
+
+            # Save last position for next stride
             self.accumulated_position[role] = position[hs_idx_local, :].copy()
-            
+
             return position, to_idx_local, hs_idx_local
 
         except Exception as e:
             logger.error(f"Error calculating stride trajectory for {role}: {e}")
             return None, None, None
 
-    def process_data_batch(self, data_batch):
+    def process_data_batch(self, data_batch: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Process a batch of IMU data from multiple sensors.
+
+        Args:
+            data_batch: Dict mapping sensor role to packet data
+        """
         with self.lock:
             for role, data in data_batch.items():
                 if role not in self.sensor_roles:
@@ -282,7 +296,8 @@ class GaitAnalyzer:
                 self.data_buffers[role]["gyr"].append(data["gyr"])
                 self.data_buffers[role]["quat"].append(data["quaternion"]) 
                     
-    def update_realtime_analysis(self):
+    def update_realtime_analysis(self) -> None:
+        """Update realtime analysis for visualization."""
         with self.lock:
             for role in self.sensor_roles:
                 n_total_samples = len(self.data_buffers[role]["timestamp"])
@@ -307,13 +322,13 @@ class GaitAnalyzer:
                     continue
                 
                 current_time_array = np.arange(len(gyr_z)) / self.fs
-                
-                # Gait event 감지
+
+                # Detect gait events
                 events = gu.detect_gait_events(gyr_z, current_time_array, threshold=self.GAIT_DETECTION_THRESHOLD)
                 hs_indices_local = [e['heelstrike_idx'] for e in events]
                 to_indices_local = [e['toeoff_idx'] for e in events]
-                
-                # 로컬 인덱스를 전역 버퍼 인덱스로 변환
+
+                # Convert local indices to global buffer indices
                 hs_indices_global = [start_idx + idx for idx in hs_indices_local]
                 to_indices_global = [start_idx + idx for idx in to_indices_local]
                 
@@ -323,24 +338,24 @@ class GaitAnalyzer:
                 self.analysis_results[role]["time_array"] = current_time_array
                 self.analysis_results[role]["heel_strikes_idx"] = hs_indices_local
                 self.analysis_results[role]["toe_offs_idx"] = to_indices_local
-                
-                # ----- Stride별 Trajectory 계산 -----
-                # 완료된 stride 찾기: TO-HS 쌍 중 아직 처리하지 않은 것
+
+                # ----- Calculate trajectory for each stride -----
+                # Find completed strides: TO-HS pairs not yet processed
                 if len(to_indices_global) > 0 and len(hs_indices_global) > 0:
-                    # 마지막으로 처리한 HS 인덱스 가져오기
+                    # Get last processed HS index
                     last_processed_hs = self.last_processed_stride[role]["hs_idx"]
-                    
-                    # TO-HS 쌍 매칭
+
+                    # Match TO-HS pairs
                     for to_idx in to_indices_global:
-                        # 이미 처리한 stride 범위는 건너뛰기
+                        # Skip already processed stride range
                         if last_processed_hs is not None and to_idx <= last_processed_hs:
-                            continue  # 이미 처리한 stride 또는 그 이전
-                        
-                        # 이 TO 이후의 첫 HS 찾기
+                            continue  # Already processed stride or earlier
+
+                        # Find first HS after this TO
                         next_hs_candidates = [hs for hs in hs_indices_global if hs > to_idx]
-                        
+
                         if not next_hs_candidates:
-                            continue  # 아직 HS가 안 나왔으면 다음 업데이트 대기
+                            continue  # If HS not yet detected, wait for next update
                         
                         hs_idx = next_hs_candidates[0]
 
@@ -353,16 +368,16 @@ class GaitAnalyzer:
                         logger.debug(f"[{role}] New stride detected: TO={to_idx}, HS={hs_idx}")
                         
                         position, to_pos_idx, hs_pos_idx = self._calculate_stride_trajectory(role, to_idx, hs_idx)
-                        
+
                         if position is not None:
-                            # Position 누적
+                            # Accumulate position
                             if self.analysis_results[role]["position"].size == 0:
-                                # 첫 stride
+                                # First stride
                                 self.analysis_results[role]["position"] = position
                                 self.analysis_results[role]["position_to_idx"] = [to_pos_idx]
                                 self.analysis_results[role]["position_hs_idx"] = [hs_pos_idx]
                             else:
-                                # 기존 position에 추가
+                                # Append to existing position
                                 prev_len = len(self.analysis_results[role]["position"])
                                 self.analysis_results[role]["position"] = np.vstack([
                                     self.analysis_results[role]["position"],
@@ -378,7 +393,8 @@ class GaitAnalyzer:
                             logger.debug(f"[{role}] Stride trajectory calculated. Total positions: {len(self.analysis_results[role]['position'])}")
 
 
-    def run_full_trajectory_analysis(self):
+    def run_full_trajectory_analysis(self) -> None:
+        """Run full trajectory analysis on all buffered data."""
         with self.lock:
             logger.info("Starting full trajectory analysis...")
             # Optimization: Copy only necessary data (shallow copy instead of deepcopy)
@@ -452,9 +468,10 @@ class GaitAnalyzer:
 
             logger.info("Full trajectory analysis finished.")
 
-    def get_realtime_data(self):
+    def get_realtime_data(self) -> Dict[str, Dict[str, Any]]:
+        """Get realtime analysis data for visualization."""
         with self.lock:
-            # 최적화: numpy 배열은 .copy()로 충분, dict는 얕은 복사
+            # Optimization: numpy arrays use .copy(), dicts use shallow copy
             result = {}
             for role, data in self.analysis_results.items():
                 result[role] = {
@@ -469,9 +486,10 @@ class GaitAnalyzer:
                 }
             return result
         
-    def get_full_analysis_data(self):
+    def get_full_analysis_data(self) -> Dict[str, Dict[str, Any]]:
+        """Get full trajectory analysis data."""
         with self.lock:
-            # 최적화: numpy 배열은 .copy()로 충분
+            # Optimization: numpy arrays use .copy()
             result = {}
             for role, data in self.full_analysis_results.items():
                 result[role] = {
@@ -481,7 +499,8 @@ class GaitAnalyzer:
                 }
             return result
         
-    def reset_data(self):
+    def reset_data(self) -> None:
+        """Reset all analysis data and buffers."""
         with self.lock:
             logger.info("Resetting gait analyzer data...")
             self.heading_correction_angle = {role: None for role in self.sensor_roles}
